@@ -1,7 +1,10 @@
 import dataclasses
 import functools
 import logging
+import os
 import platform
+import signal
+import time
 from typing import Any
 
 import etils.epath as epath
@@ -200,7 +203,9 @@ def main(config: _config.TrainConfig):
             f"Batch size {config.batch_size} must be divisible by the number of devices {jax.device_count()}."
         )
 
-    jax.config.update("jax_compilation_cache_dir", str(epath.Path("~/.cache/jax").expanduser()))
+    cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR", "~/.cache/jax")
+    jax.config.update("jax_compilation_cache_dir", str(epath.Path(cache_dir).expanduser()))
+    logging.info("Compilation cache: %s", cache_dir)
 
     rng = jax.random.key(config.seed)
     train_rng, init_rng = jax.random.split(rng)
@@ -256,9 +261,25 @@ def main(config: _config.TrainConfig):
     )
 
     infos = []
+    timing_steps = int(os.environ.get("OPENPI_TIMING_STEPS", "0"))
+    early_save_step = int(os.environ.get("OPENPI_EARLY_SAVE_STEP", "-1"))
+    stop_requested = False
+
+    def request_stop(signum, frame):
+        del signum, frame
+        nonlocal stop_requested
+        stop_requested = True
+        logging.info("Stop requested; saving after the current training step.")
+
+    signal.signal(signal.SIGTERM, request_stop)
     for step in pbar:
+        step_started = time.perf_counter()
         with sharding.set_mesh(mesh):
             train_state, info = ptrain_step(train_rng, train_state, batch)
+        measure_step = step < start_step + timing_steps
+        if measure_step:
+            jax.block_until_ready((train_state, info))
+            compute_seconds = time.perf_counter() - step_started
         infos.append(info)
         if step % config.log_interval == 0:
             stacked_infos = common_utils.stack_forest(infos)
@@ -267,10 +288,28 @@ def main(config: _config.TrainConfig):
             pbar.write(f"Step {step}: {info_str}")
             wandb.log(reduced_info, step=step)
             infos = []
-        batch = next(data_iter)
+        data_started = time.perf_counter()
+        if not stop_requested:
+            batch = next(data_iter)
+        if measure_step:
+            jax.block_until_ready(batch)
+            logging.info(
+                "Step timing %d: compute=%.3fs data=%.3fs loss=%.6f",
+                step,
+                compute_seconds,
+                time.perf_counter() - data_started,
+                float(info["loss"]),
+            )
 
-        if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
+        if (
+            (step % config.save_interval == 0 and step > start_step)
+            or step == config.num_train_steps - 1
+            or step == early_save_step
+            or stop_requested
+        ):
             _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)
+        if stop_requested:
+            break
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()

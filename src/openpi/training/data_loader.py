@@ -146,6 +146,11 @@ def create_torch_dataset(
                 action_horizon=action_horizon,
             )
         elif len(data_dirs) > 1:
+            if getattr(data_config, "dataset_mode", "mixture") == "concat":
+                return _groot_openpi_dataset.GrootOpenpiConcatDataset(
+                    dataset_meta_list=data_dirs,
+                    action_horizon=action_horizon,
+                )
             return _groot_openpi_dataset.GrootOpenpiMultiDataset(
                 dataset_meta_list=data_dirs,
                 dataset_weights=getattr(data_config, "dataset_weights", None),

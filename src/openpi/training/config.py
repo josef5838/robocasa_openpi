@@ -105,6 +105,8 @@ class DataConfig:
     # Used for Groot datasets
     data_dirs: Any | None = None
     dataset_weights: list[float] | None = None
+    # Weighted mixture (default) or deterministic concatenation for multiple Groot sources.
+    dataset_mode: str = "mixture"
 
 
 class GroupFactory(Protocol):
@@ -213,10 +215,12 @@ class DataConfigFactory(abc.ABC):
             logging.info(f"Norm stats not found in {data_assets_dir}.")
             # Fallback: try to read and convert stats from repo meta
             # TODO: fix
-            converted = _groot_openpi_dataset._convert_stats_from_repo_meta(asset_id)
-            if converted is not None:
-                logging.info(f"Converted norm stats from repo meta for {asset_id}")
-                return converted
+            convert_stats = getattr(_groot_openpi_dataset, "_convert_stats_from_repo_meta", None)
+            if convert_stats is not None:
+                converted = convert_stats(asset_id)
+                if converted is not None:
+                    logging.info(f"Converted norm stats from repo meta for {asset_id}")
+                    return converted
         return None
 
 
@@ -555,6 +559,7 @@ class LeRobotRobocasaDataConfig(DataConfigFactory):
     
     data_dirs: Any | None = None
     dataset_weights: list[float] | None = None
+    dataset_mode: str = "mixture"
     
     action_dim: int | None = None
     
@@ -594,6 +599,7 @@ class LeRobotRobocasaDataConfig(DataConfigFactory):
             norm_stats=base.norm_stats or fallback_norm_stats,
             data_dirs=self.data_dirs,
             dataset_weights=self.dataset_weights,
+            dataset_mode=self.dataset_mode,
         )
 
 

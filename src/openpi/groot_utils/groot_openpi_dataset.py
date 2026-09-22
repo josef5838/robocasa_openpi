@@ -19,6 +19,7 @@ import openpi.shared.normalize as _normalize
 
 import pathlib
 from pathlib import Path
+from bisect import bisect_right
 
 T_co = TypeVar("T_co", covariant=True)
 
@@ -248,6 +249,41 @@ class GrootOpenpiMultiDataset(LeRobotMixtureDataset):
         if "video.robot0_agentview_right" in item:
             new_item["observation/right_image"] = item["video.robot0_agentview_right"][0]
         return new_item
+
+
+class GrootOpenpiConcatDataset:
+    """A deterministic, unweighted concatenation of Groot datasets.
+
+    Unlike ``GrootOpenpiMultiDataset``, every valid timestep appears once in a
+    dataset pass. The RoboCasa365 combined arm uses this to avoid random
+    mixture sampling becoming a second experimental variable.
+    """
+
+    def __init__(self, dataset_meta_list, action_horizon: int):
+        self.datasets = [
+            GrootOpenpiSingleDataset(dataset_meta=meta, action_horizon=action_horizon)
+            for meta in dataset_meta_list
+        ]
+        if not self.datasets:
+            raise ValueError("GrootOpenpiConcatDataset requires at least one dataset")
+        self._ends = []
+        total = 0
+        for dataset in self.datasets:
+            total += len(dataset)
+            self._ends.append(total)
+
+    def __len__(self) -> int:
+        return self._ends[-1]
+
+    def __getitem__(self, index: SupportsIndex) -> dict:
+        index = index.__index__()
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        dataset_index = bisect_right(self._ends, index)
+        start = 0 if dataset_index == 0 else self._ends[dataset_index - 1]
+        return self.datasets[dataset_index][index - start]
 
 
 def _load_norm_stats_from_groot_dataset(ds_meta: dict) -> dict[str, _transforms.NormStats] | None:

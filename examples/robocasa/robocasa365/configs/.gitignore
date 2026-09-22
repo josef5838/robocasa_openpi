@@ -1,0 +1,2 @@
+# Local immutable Hugging Face revision; keep this machine-specific file out of Git.
+data_release.json
