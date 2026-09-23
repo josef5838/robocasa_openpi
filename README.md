@@ -64,21 +64,21 @@ Every asset contributes 50 demonstrations. `native_plus_ours` is the exact deter
 
 ## Train
 
-Train all three arms for one task and one seed together. The contract is Pi0.5 with batch size 64, 8,000 steps, peak learning rate `5e-5`, PaliGemma LoRA rank 16, action-expert LoRA rank 32, and a trainable vision tower. The command writes manifests, configuration digests, checkpoints, and copied normalization assets below the output root.
+Every task-arm-seed combination has an independent entry point, so it can be assigned directly to a GPU card or scheduler job. The contract is Pi0.5 with batch size 64, 8,000 steps, peak learning rate `5e-5`, PaliGemma LoRA rank 16, action-expert LoRA rank 32, and a trainable vision tower. Each job writes its manifest digest, checkpoint, and copied normalization assets below the shared output root.
 
 ```bash
-COMMON=(
-  --task TurnSinkSpout
-  --data-root examples/robocasa/robocasa365/data/release
-  --output-root examples/robocasa/robocasa365/artifacts/turnsink_seed0
-  --seed 0
-)
-
-examples/robocasa/robocasa365/scripts/run_three_arms.sh config "${COMMON[@]}"
-examples/robocasa/robocasa365/scripts/run_three_arms.sh train "${COMMON[@]}"
+# One task/arm/seed job on GPU 0.
+CUDA_VISIBLE_DEVICES=0 examples/robocasa/robocasa365/scripts/run_study_arm.sh config --task TurnSinkSpout --arm native --data-root examples/robocasa/robocasa365/data/release --output-root examples/robocasa/robocasa365/artifacts/turnsink_seed0 --seed 0
+CUDA_VISIBLE_DEVICES=0 examples/robocasa/robocasa365/scripts/run_study_arm.sh train --task TurnSinkSpout --arm native --data-root examples/robocasa/robocasa365/data/release --output-root examples/robocasa/robocasa365/artifacts/turnsink_seed0 --seed 0
 ```
 
-Repeat the same procedure with seeds `1` and `2`. Add `--resume` to resume an interrupted training command. Checkpoints are stored at:
+Use the same command with `--arm native_plus_ours` or `--arm ours` on other cards. The task name, arm, and seed are part of every output path, so all three jobs can safely share one `--output-root`. For a sequential local run, the existing all-arms launcher remains available:
+
+```bash
+examples/robocasa/robocasa365/scripts/run_three_arms.sh train --task TurnSinkSpout --data-root examples/robocasa/robocasa365/data/release --output-root examples/robocasa/robocasa365/artifacts/turnsink_seed0 --seed 0
+```
+
+The frozen design runs each task and arm once with seed `0`. Add `--resume` to resume an interrupted training command. Checkpoints are stored at:
 
 ```text
 <output-root>/checkpoints/pi05_robocasa365_<task>_<arm>_lora_b64_8k_fixed_instruction/seed-<seed>/<step>/
@@ -86,7 +86,19 @@ Repeat the same procedure with seeds `1` and `2`. Add `--resume` to resume an in
 
 ## Evaluate
 
-Evaluation uses only held-out native fixtures that match the structural variant of the native training fixtures. For a native or combined arm, its native training fixtures are excluded. For the generated-only arm, all compatible native fixtures remain held out. The evaluator reconstructs the simulator from the portable `converted/.../demo.hdf5` recording included in each release asset (not an author-machine absolute path), uses the fixed training instruction, three 224px camera inputs, five-step replanning, and normalization statistics saved in the checkpoint.
+Evaluation uses one shared held-out native-fixture pool for all three arms. It is derived solely from the frozen `native` arm: its selected native fixtures are excluded, and the remaining fixtures with the same structural variant become the test assets for `native`, `native_plus_ours`, and `ours`. The exact fixture IDs are pinned in [held_out_native_assets_20260922.json](examples/robocasa/robocasa365/configs/held_out_native_assets_20260922.json); evaluation reads this list directly and verifies that the local fixture models exist and share one structural variant before running. The evaluator reconstructs the simulator from the portable `converted/.../demo.hdf5` recording included in each release asset, uses the fixed training instruction, three 224px camera inputs, five-step replanning, and normalization statistics saved in the checkpoint.
+
+| Task | Shared held-out native fixtures | Rollouts per arm |
+| --- | --- | ---: |
+| OpenElectricKettleLid | ElectricKettle001, ElectricKettle004, ElectricKettle015, ElectricKettle016, ElectricKettle018, ElectricKettle019, ElectricKettle023, ElectricKettle024, ElectricKettle025 | 450 |
+| OpenFridgeDrawer | Refrigerator034, Refrigerator042, Refrigerator045, Refrigerator049, Refrigerator053, Refrigerator054, Refrigerator055, Refrigerator056, Refrigerator057, Refrigerator058, Refrigerator067 | 550 |
+| OpenStandMixerHead | StandMixer004, StandMixer005, StandMixer010, StandMixer011, StandMixer014, StandMixer017, StandMixer019, StandMixer021, StandMixer024, StandMixer027, StandMixer029, StandMixer030 | 600 |
+| OpenToasterOvenDoor | ToasterOven009, ToasterOven017, ToasterOven039, ToasterOven049, ToasterOven062 | 250 |
+| SlideDishwasherRack | Dishwasher043, Dishwasher044, Dishwasher062, Dishwasher067 | 200 |
+| SlideOvenRack | Oven031, Oven036, Oven037, Oven038, Oven046, Oven047, Oven050, Oven052, Oven054 | 450 |
+| TurnOnStove | Stove068 | 50 |
+| TurnSinkSpout | Sink003, Sink014, Sink015, Sink017, Sink027, Sink030, Sink037, Sink046, Sink047, Sink048, Sink051, Sink053 | 600 |
+| **All tasks** | **63 fixtures shared by every arm** | **3,150** |
 
 First inspect the immutable test split for every arm. This command does not run policy rollouts and does not require a checkpoint, so run it before training to review the exact evaluation protocol:
 
@@ -121,6 +133,8 @@ The `held_out.success_rate` field is the per-task, per-arm success rate across a
 ## Repository entry points
 
 - [Study configuration](examples/robocasa/robocasa365/configs/robocasa365_20260922.json)
-- [Three-arm trainer](examples/robocasa/robocasa365/scripts/run_three_arms.sh)
+- [Frozen held-out native fixtures](examples/robocasa/robocasa365/configs/held_out_native_assets_20260922.json)
+- [Per-task, per-arm trainer](examples/robocasa/robocasa365/scripts/run_study_arm.sh)
+- [Three-arm sequential trainer](examples/robocasa/robocasa365/scripts/run_three_arms.sh)
 - [Three-arm evaluator](examples/robocasa/robocasa365/scripts/evaluate_three_arms.py)
 - [Held-out evaluation implementation](src/openpi/robocasa365/evaluate.py)

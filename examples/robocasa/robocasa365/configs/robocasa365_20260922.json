@@ -28,9 +28,7 @@
     "native_plus_ours"
   ],
   "seeds": [
-    0,
-    1,
-    2
+    0
   ],
   "training": {
     "batch_size": 64,

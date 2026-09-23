@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "study_config": "robocasa365_20260922.json",
+  "derivation": "For each task, exclude fixture IDs in the native arm manifest and retain registry fixtures with the same structural signature. This one pool is shared by native, native_plus_ours, and ours.",
+  "tasks": {
+    "OpenElectricKettleLid": {
+      "native_training_assets": ["ElectricKettle003", "ElectricKettle005", "ElectricKettle007", "ElectricKettle009", "ElectricKettle013", "ElectricKettle014", "ElectricKettle017", "ElectricKettle021"],
+      "held_out_native_assets": ["ElectricKettle001", "ElectricKettle004", "ElectricKettle015", "ElectricKettle016", "ElectricKettle018", "ElectricKettle019", "ElectricKettle023", "ElectricKettle024", "ElectricKettle025"]
+    },
+    "OpenFridgeDrawer": {
+      "native_training_assets": ["Refrigerator032", "Refrigerator036", "Refrigerator038", "Refrigerator048", "Refrigerator051"],
+      "held_out_native_assets": ["Refrigerator034", "Refrigerator042", "Refrigerator045", "Refrigerator049", "Refrigerator053", "Refrigerator054", "Refrigerator055", "Refrigerator056", "Refrigerator057", "Refrigerator058", "Refrigerator067"]
+    },
+    "OpenStandMixerHead": {
+      "native_training_assets": ["StandMixer003", "StandMixer006", "StandMixer007", "StandMixer008", "StandMixer012", "StandMixer013", "StandMixer015", "StandMixer025", "StandMixer026"],
+      "held_out_native_assets": ["StandMixer004", "StandMixer005", "StandMixer010", "StandMixer011", "StandMixer014", "StandMixer017", "StandMixer019", "StandMixer021", "StandMixer024", "StandMixer027", "StandMixer029", "StandMixer030"]
+    },
+    "OpenToasterOvenDoor": {
+      "native_training_assets": ["ToasterOven008", "ToasterOven027", "ToasterOven029", "ToasterOven033", "ToasterOven034", "ToasterOven036"],
+      "held_out_native_assets": ["ToasterOven009", "ToasterOven017", "ToasterOven039", "ToasterOven049", "ToasterOven062"]
+    },
+    "SlideDishwasherRack": {
+      "native_training_assets": ["Dishwasher032", "Dishwasher034", "Dishwasher039", "Dishwasher040", "Dishwasher042", "Dishwasher048", "Dishwasher049", "Dishwasher051", "Dishwasher054", "Dishwasher055"],
+      "held_out_native_assets": ["Dishwasher043", "Dishwasher044", "Dishwasher062", "Dishwasher067"]
+    },
+    "SlideOvenRack": {
+      "native_training_assets": ["Oven043", "Oven044", "Oven045"],
+      "held_out_native_assets": ["Oven031", "Oven036", "Oven037", "Oven038", "Oven046", "Oven047", "Oven050", "Oven052", "Oven054"]
+    },
+    "TurnOnStove": {
+      "native_training_assets": ["Stove003", "Stove027", "Stove066", "Stove067", "Stove069", "Stove071", "Stove072", "Stove073", "Stove075", "Stove077"],
+      "held_out_native_assets": ["Stove068"]
+    },
+    "TurnSinkSpout": {
+      "native_training_assets": ["Sink002", "Sink004", "Sink007", "Sink010", "Sink013", "Sink021", "Sink029", "Sink038", "Sink039", "Sink042"],
+      "held_out_native_assets": ["Sink003", "Sink014", "Sink015", "Sink017", "Sink027", "Sink030", "Sink037", "Sink046", "Sink047", "Sink048", "Sink051", "Sink053"]
+    }
+  }
+}

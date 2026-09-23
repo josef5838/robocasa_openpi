@@ -22,7 +22,7 @@ from openpi.robocasa365.study import DEFAULT_STUDY, build_config, load_arm, read
 
 
 CAMERAS = ("robot0_eye_in_hand", "robot0_agentview_left", "robot0_agentview_right")
-PROTOCOL_VERSION = 1
+FROZEN_HELD_OUT_ASSETS = DEFAULT_STUDY.parent / "held_out_native_assets_20260922.json"
 # Target fixture registry, native model-name prefix.  Keeping this explicit
 # prevents a name match in an unrelated registry from becoming a test asset.
 TASK_SPECS = {
@@ -92,28 +92,29 @@ def load_registry_assets(assets_root: Path, fixture_key: str, prefix: str) -> di
     return result
 
 
-def build_asset_split(data_root: Path, task: str, arm: str, assets_root: Path) -> tuple[list[Asset], list[Asset]]:
-    """Label unselected native models in the training variant as test assets."""
+def build_frozen_native_asset_split(task: str, assets_root: Path) -> tuple[list[Asset], list[Asset]]:
+    """Load the pinned native fixture split and validate its local models."""
     fixture_key, prefix = TASK_SPECS[task]
     candidates = load_registry_assets(assets_root, fixture_key, prefix)
-    arm_entries = load_arm(data_root, task, arm)
-    training_ids = sorted({item.get("asset") for item in arm_entries if item.get("asset") in candidates})
-    # An ``ours`` arm has no native training instances.  Native instances still
-    # provide the task's structural variant, but none are excluded from testing.
-    reference_ids = training_ids or sorted(
-        item["asset"] for item in load_arm(data_root, task, "native") if item.get("asset") in candidates
-    )
-    if not reference_ids:
-        raise ValueError(f"No native {prefix} reference assets for {task}/{arm}")
-    signatures = {json.dumps(candidates[asset].signature, sort_keys=True) for asset in reference_ids}
+    frozen = read_json(FROZEN_HELD_OUT_ASSETS).get("tasks", {}).get(task)
+    if not isinstance(frozen, dict):
+        raise ValueError(f"No frozen held-out fixture record for {task}: {FROZEN_HELD_OUT_ASSETS}")
+    native_training_ids = frozen.get("native_training_assets")
+    held_out_ids = frozen.get("held_out_native_assets")
+    if not isinstance(native_training_ids, list) or not isinstance(held_out_ids, list):
+        raise ValueError(f"Invalid frozen held-out fixture record for {task}: {FROZEN_HELD_OUT_ASSETS}")
+    requested_ids = native_training_ids + held_out_ids
+    if len(requested_ids) != len(set(requested_ids)):
+        raise ValueError(f"Duplicate fixture IDs in {FROZEN_HELD_OUT_ASSETS} for {task}")
+    unknown = sorted(set(requested_ids) - set(candidates))
+    if unknown:
+        raise ValueError(f"Frozen fixture IDs are absent from the local registry for {task}: {unknown}")
+    native_training = [candidates[asset_id] for asset_id in native_training_ids]
+    held_out = [candidates[asset_id] for asset_id in held_out_ids]
+    signatures = {json.dumps(asset.signature, sort_keys=True) for asset in native_training + held_out}
     if len(signatures) != 1:
-        raise ValueError(f"Native references do not share one structural variant: {reference_ids}")
-    training = [candidates[asset] for asset in training_ids]
-    held_out = [asset for name, asset in sorted(candidates.items())
-                if name not in set(training_ids) and asset.signature == candidates[reference_ids[0]].signature]
-    if not held_out:
-        raise ValueError(f"No held-out native asset remains for {task}/{arm}")
-    return training, held_out
+        raise ValueError(f"Frozen fixture IDs do not share one structural variant for {task}")
+    return native_training, held_out
 
 
 def recording_path(entry: dict[str, Any], data_root: Path) -> Path:
@@ -276,7 +277,6 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--robocasa-assets", type=Path)
     parser.add_argument("--eval-root", type=Path)
-    parser.add_argument("--assets", nargs="+")
     parser.add_argument("--num-trials", type=int, default=50)
     parser.add_argument("--replan-steps", type=int, default=5)
     parser.add_argument("--seed-offset", type=int, default=3000)
@@ -290,12 +290,7 @@ def main() -> None:
     if args.robocasa_assets is None:
         import robocasa
         args.robocasa_assets = Path(robocasa.models.assets_root)
-    training, held_out = build_asset_split(args.data_root, args.task, args.arm, args.robocasa_assets)
-    if args.assets:
-        unknown = set(args.assets) - {x.asset_id for x in held_out}
-        if unknown:
-            raise ValueError(f"Requested assets are not derived held-out assets: {sorted(unknown)}")
-        held_out = [x for x in held_out if x.asset_id in set(args.assets)]
+    native_reference_assets, held_out = build_frozen_native_asset_split(args.task, args.robocasa_assets)
     context = training_context(args.data_root, args.task, args.arm)
     # Planning intentionally precedes training: it proves the held-out split and
     # portable recording context without requiring a checkpoint to exist.
@@ -307,10 +302,14 @@ def main() -> None:
     elif checkpoint is not None and not (checkpoint / "_CHECKPOINT_METADATA").is_file():
         raise FileNotFoundError(f"Not a committed checkpoint: {checkpoint}")
     fixture_key, _ = TASK_SPECS[args.task]
-    protocol = {"protocol_version": PROTOCOL_VERSION, "task": args.task, "arm": args.arm, "training_seed": args.seed,
+    protocol = {"task": args.task, "arm": args.arm, "training_seed": args.seed,
                 "checkpoint": str(checkpoint) if checkpoint is not None else None,
                 "data_root": str(args.data_root.resolve()), "fixture_key": fixture_key,
-                "training_assets": [asset_record(x) for x in training], "held_out_test_assets": [asset_record(x) for x in held_out],
+                "native_reference_training_assets": [asset_record(x) for x in native_reference_assets],
+                "held_out_test_assets": [asset_record(x) for x in held_out],
+                "held_out_source_arm": "native",
+                "held_out_assets_config": FROZEN_HELD_OUT_ASSETS.name,
+                "held_out_assets_config_sha256": hashlib.sha256(FROZEN_HELD_OUT_ASSETS.read_bytes()).hexdigest(),
                 "num_trials_per_asset": 50, "replan_steps": 5,
                 "preprocessing": "Pi0.5 training transforms; 224px three-camera observations; checkpoint normalization",
                 "simulator": "recorded training env_args with only the target fixture XML replaced",

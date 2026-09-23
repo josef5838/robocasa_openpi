@@ -130,6 +130,6 @@ examples/robocasa/robocasa365/scripts/run_three_arms.sh config "${COMMON[@]}"
 examples/robocasa/robocasa365/scripts/run_three_arms.sh train "${COMMON[@]}"
 ```
 
-Repeat with seeds `1` and `2`. Add `--resume` to the train command to resume an interrupted arm. For each invocation, the runner records the study digest, manifests, source revision, task, arm, seed, and relevant environment settings under `<output-root>/runs/`.
+The frozen design runs each task and arm once with seed `0`. Add `--resume` to the train command to resume an interrupted arm. For each invocation, the runner records the study digest, manifests, source revision, task, arm, seed, and relevant environment settings under `<output-root>/runs/`.
 
 For a nonstandard location of uploaded norm stats, add `--norm-stats-root /path/to/full_population` to either command.
