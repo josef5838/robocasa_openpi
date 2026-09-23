@@ -1,4 +1,5 @@
 # Data directories.
+third_party/
 assets/
 checkpoints/
 data/
