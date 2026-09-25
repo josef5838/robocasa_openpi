@@ -48,6 +48,7 @@ class Asset:
 @dataclass(frozen=True)
 class EpisodeResult:
     episode: int
+    evaluation_index: int
     seed: int
     success: bool
     steps: int
@@ -196,24 +197,27 @@ def policy_input(obs: dict[str, Any], prompt: str) -> dict[str, Any]:
 
 
 def run_asset(policy: Any, task: str, fixture_key: str, asset: Asset, context: dict[str, Any], output_dir: Path,
-              trials: int, seed_offset: int, replan_steps: int, video_mode: str) -> None:
+              episode_indices: list[int], seed_offset: int, replan_steps: int, video_mode: str, video_fps: int) -> None:
     import imageio.v2 as imageio
     from robocasa.utils.dataset_registry_utils import get_task_horizon
 
     asset_dir, results_path = output_dir / asset.asset_id, output_dir / asset.asset_id / "episodes.json"
     results = json.loads(results_path.read_text()) if results_path.exists() else []
-    if len(results) > trials:
-        raise ValueError(f"{results_path} has more than {trials} episodes")
+    if len(results) > len(episode_indices):
+        raise ValueError(f"{results_path} has more than {len(episode_indices)} episodes")
     with fixed_fixture(fixture_key, asset.model):
         env = create_environment(context["env_meta"])
         try:
-            for episode in range(len(results), trials):
-                episode_seed = seed_offset + int(hashlib.sha256(asset.asset_id.encode()).hexdigest()[:8], 16) + episode
+            for episode in range(len(results), len(episode_indices)):
+                evaluation_index = episode_indices[episode]
+                episode_seed = (seed_offset + int(hashlib.sha256(asset.asset_id.encode()).hexdigest()[:8], 16)
+                                + evaluation_index) % (2**32 - 1)
                 np.random.seed(episode_seed)
                 env.env.rng = np.random.default_rng(episode_seed)
                 episode_meta = context["episode_metas"][episode % len(context["episode_metas"])]
                 env.env.set_ep_meta(copy.deepcopy(episode_meta))
-                obs, plan, success, frames = env.reset(unset_ep_meta=False), collections.deque(), False, []
+                obs, plan, success = env.reset(unset_ep_meta=False), collections.deque(), False
+                frames = {camera: [] for camera in CAMERAS}
                 meta = env.env.get_ep_meta()
                 for step in range(int(get_task_horizon(task))):
                     if not plan:
@@ -223,17 +227,23 @@ def run_asset(policy: Any, task: str, fixture_key: str, asset: Asset, context: d
                         plan.extend(actions[:replan_steps])
                     obs, _, _, _ = env.step(np.asarray(plan.popleft()).copy())
                     success = bool(env.is_success()["task"])
-                    if video_mode != "none" and (step % 2 == 0 or success):
-                        frames.append(np.asarray(obs["robot0_agentview_left_image"]).copy())
+                    if video_mode != "none":
+                        for camera in CAMERAS:
+                            frames[camera].append(np.asarray(obs[f"{camera}_image"]).copy())
                     if success:
                         break
-                results.append(dataclasses.asdict(EpisodeResult(episode, episode_seed, success, step + 1,
+                results.append(dataclasses.asdict(EpisodeResult(episode, evaluation_index, episode_seed, success, step + 1,
                     int(meta["layout_id"]), int(meta["style_id"]), meta["lang"])))
                 atomic_json(results_path, results)
                 if video_mode == "all" or (video_mode == "representative" and not any(x["success"] == success for x in results[:-1])):
                     asset_dir.mkdir(parents=True, exist_ok=True)
-                    imageio.mimwrite(asset_dir / f"rollout_{episode:03d}_{'success' if success else 'failure'}.mp4", frames, fps=10)
-                logging.info("%s %d/%d success=%s", asset.asset_id, episode + 1, trials, success)
+                    for camera, camera_frames in frames.items():
+                        imageio.mimwrite(
+                            asset_dir / f"rollout_{episode:03d}_{'success' if success else 'failure'}_{camera}.mp4",
+                            camera_frames,
+                            fps=video_fps,
+                        )
+                logging.info("%s evaluation %d success=%s seed=%d", asset.asset_id, evaluation_index, success, episode_seed)
         finally:
             env.env.close()
 
@@ -277,13 +287,19 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--robocasa-assets", type=Path)
     parser.add_argument("--eval-root", type=Path)
-    parser.add_argument("--num-trials", type=int, default=50)
+    parser.add_argument("--num-trials", type=int, default=50,
+                        help="Trials per held-out asset unless --total-episodes is set")
+    parser.add_argument("--total-episodes", type=int,
+                        help="Total episodes per checkpoint; spreads trials across distinct assets first")
     parser.add_argument("--replan-steps", type=int, default=5)
     parser.add_argument("--seed-offset", type=int, default=3000)
     parser.add_argument("--video-mode", choices=("representative", "all", "none"), default="representative")
+    parser.add_argument("--video-fps", type=int, default=10)
     args = parser.parse_args()
-    if args.num_trials != 50 or args.replan_steps != 5:
-        raise ValueError("The frozen protocol requires exactly 50 trials and 5-step replanning")
+    if args.num_trials < 1 or args.replan_steps != 5 or args.video_fps < 1:
+        raise ValueError("Trials and video FPS must be positive; the protocol requires 5-step replanning")
+    if args.total_episodes is not None and args.total_episodes < 1:
+        raise ValueError("--total-episodes must be positive")
     study = read_json(args.study)
     if args.task not in study["tasks"] or args.arm not in study["arms"] or args.seed not in study["seeds"]:
         parser.error("task, arm, or seed is outside the frozen study")
@@ -292,6 +308,18 @@ def main() -> None:
         args.robocasa_assets = Path(robocasa.models.assets_root)
     native_reference_assets, held_out = build_frozen_native_asset_split(args.task, args.robocasa_assets)
     context = training_context(args.data_root, args.task, args.arm)
+    episode_indices_by_asset = {asset.asset_id: [] for asset in held_out}
+    if args.total_episodes is None:
+        for asset in held_out:
+            episode_indices_by_asset[asset.asset_id] = list(range(args.num_trials))
+    else:
+        ordered_assets = sorted(
+            held_out,
+            key=lambda asset: hashlib.sha256(f"{args.seed_offset}:{asset.asset_id}".encode()).digest(),
+        )
+        for evaluation_index in range(args.total_episodes):
+            asset = ordered_assets[evaluation_index % len(ordered_assets)]
+            episode_indices_by_asset[asset.asset_id].append(evaluation_index)
     # Planning intentionally precedes training: it proves the held-out split and
     # portable recording context without requiring a checkpoint to exist.
     checkpoint = args.checkpoint.resolve() if args.checkpoint is not None else None
@@ -310,7 +338,21 @@ def main() -> None:
                 "held_out_source_arm": "native",
                 "held_out_assets_config": FROZEN_HELD_OUT_ASSETS.name,
                 "held_out_assets_config_sha256": hashlib.sha256(FROZEN_HELD_OUT_ASSETS.read_bytes()).hexdigest(),
-                "num_trials_per_asset": 50, "replan_steps": 5,
+                "num_trials_per_asset": args.num_trials if args.total_episodes is None else None,
+                "total_episodes": args.total_episodes,
+                "seed_offset": args.seed_offset,
+                "asset_selection": "deterministic distinct-first rotation" if args.total_episodes is not None else "all held-out assets",
+                "episode_asset_assignments": [
+                    asset_id
+                    for evaluation_index in range(args.total_episodes or args.num_trials * len(held_out))
+                    for asset_id, indices in episode_indices_by_asset.items()
+                    if evaluation_index in indices
+                ],
+                "episode_seed_rule": "(seed_offset + uint32(sha256(asset_id)) + evaluation_index) modulo 2^32-1",
+                "video_mode": args.video_mode,
+                "video_fps": args.video_fps,
+                "recorded_cameras": list(CAMERAS) if args.video_mode != "none" else [],
+                "replan_steps": 5,
                 "preprocessing": "Pi0.5 training transforms; 224px three-camera observations; checkpoint normalization",
                 "simulator": "recorded training env_args with only the target fixture XML replaced",
                 "training_prompt_counts": context["training_prompt_counts"]}
@@ -331,7 +373,8 @@ def main() -> None:
                           study, args.task, args.arm, args.seed, resume=False)
     policy = create_trained_policy(config, checkpoint)
     for asset in held_out:
-        run_asset(policy, args.task, fixture_key, asset, context, output_dir, 50, args.seed_offset, 5, args.video_mode)
+        run_asset(policy, args.task, fixture_key, asset, context, output_dir,
+                  episode_indices_by_asset[asset.asset_id], args.seed_offset, 5, args.video_mode, args.video_fps)
         atomic_json(output_dir / "stats.json", {**protocol, "held_out": summarize(output_dir, held_out)})
     atomic_json(output_dir / "stats.json", {**protocol, "held_out": summarize(output_dir, held_out)})
     print(output_dir / "stats.json")

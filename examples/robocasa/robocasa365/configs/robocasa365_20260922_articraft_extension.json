@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "name": "robocasa365_current_pi05_lora_vision_8k_fixed_instruction_articraft_extension",
+  "release": "robocasa365-current-20260922-local-articraft",
+  "tasks": [
+    "OpenElectricKettleLid",
+    "OpenFridgeDrawer",
+    "OpenStandMixerHead",
+    "OpenToasterOvenDoor",
+    "SlideDishwasherRack",
+    "SlideOvenRack",
+    "TurnOnStove",
+    "TurnSinkSpout"
+  ],
+  "task_instructions": {
+    "OpenElectricKettleLid": "Open the electric kettle lid.",
+    "OpenFridgeDrawer": "Open the fridge drawer.",
+    "OpenStandMixerHead": "Open the stand mixer head.",
+    "OpenToasterOvenDoor": "Open the toaster oven door.",
+    "SlideDishwasherRack": "Fully slide the dishwasher rack out.",
+    "SlideOvenRack": "Fully slide the oven rack out.",
+    "TurnOnStove": "Turn on the stove.",
+    "TurnSinkSpout": "Turn the sink spout to the right."
+  },
+  "arms": ["native", "ours", "native_plus_ours", "articraft"],
+  "seeds": [0],
+  "training": {
+    "batch_size": 64,
+    "steps": 8000,
+    "save_interval": 1000,
+    "num_workers": 4,
+    "wandb_enabled": false
+  },
+  "prompt_policy": "Replace every dataset prompt with the task instruction before Pi0.5 tokenization.",
+  "data_contract": {
+    "episodes_per_asset": 50,
+    "state_dim": 16,
+    "action_dim": 12,
+    "image_size": [256, 256, 3],
+    "cameras": ["robot0_eye_in_hand", "robot0_agentview_left", "robot0_agentview_right"]
+  },
+  "model_contract": {
+    "model_type": "Pi0Config(pi05=True)",
+    "base_weights": "gs://openpi-assets/checkpoints/pi05_base/params",
+    "batch_size": 64,
+    "peak_learning_rate": 0.00005,
+    "paligemma_variant": "gemma_2b_lora",
+    "paligemma_lora_rank": 16,
+    "action_expert_variant": "gemma_300m_lora",
+    "action_expert_lora_rank": 32,
+    "vision_tower_trainable": true
+  }
+}

@@ -13,6 +13,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_STUDY = REPO_ROOT / "examples/robocasa/robocasa365/configs/robocasa365_20260922.json"
 SEED = 0
 
 
@@ -30,8 +31,9 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--study", type=Path, default=DEFAULT_STUDY)
     parser.add_argument("--task", required=True)
-    parser.add_argument("--arm", required=True, choices=("native", "native_plus_ours", "ours"))
+    parser.add_argument("--arm", required=True, choices=("native", "native_plus_ours", "ours", "articraft"))
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
@@ -42,6 +44,7 @@ def main() -> None:
         sys.path.insert(0, repo_src)
     os.environ["PYTHONPATH"] = repo_src + (":" + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "")
     common = [
+        "--study", str(args.study),
         "--task", args.task,
         "--arm", args.arm,
         "--data-root", str(args.data_root),
